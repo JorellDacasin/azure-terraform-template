@@ -155,11 +155,65 @@ Creates the spoke VNet where workloads will actually run (AKS, databases, etc.).
 
 > Spoke address pattern: hub = `10.0.x.x`, spoke 1 = `10.1.x.x`, spoke 2 = `10.2.x.x` — never overlapping.
 
+### Files created (`terraform/modules/networking/` — continued)
+
+#### `nsgs.tf`
+Defines Network Security Groups for subnets that support them. **AzureFirewallSubnet and GatewaySubnet do NOT allow custom NSGs** — Azure manages those internally.
+
+- **Bastion NSG** (`nsg-bastion-dev-uae`) — attached to `AzureBastionSubnet`.
+  - Inbound: allows HTTPS (portal access) + Gateway Manager (Azure control plane).
+  - Outbound: allows SSH/RDP to spoke VMs + HTTPS to Azure Cloud (telemetry).
+  - Why: Azure Bastion has strict required rules — missing any of these and Bastion won't function.
+
+- **App NSG** (`nsg-app-dev-uae`) — attached to `snet-app`.
+  - Inbound: allows SSH/RDP from Bastion subnet (10.0.2.0/26) only + HTTPS from hub (10.0.0.0/16). Denies all other inbound at priority 4096.
+  - Outbound: allows database ports (1433/SQL, 5432/Postgres, 3306/MySQL) to data subnet + HTTPS to internet.
+  - Why: app tier should only be reachable from Bastion (maintenance) and the hub (firewall-forwarded traffic). No direct internet inbound.
+
+- **Data NSG** (`nsg-data-dev-uae`) — attached to `snet-data`.
+  - Inbound: allows database ports from app subnet (10.1.0.0/24) only + Bastion SSH for maintenance. Denies all other inbound.
+  - Outbound: denies internet access entirely.
+  - Why: data tier is fully isolated. Only the app tier talks to it. No internet access = smallest attack surface.
+
+- Each NSG is associated to its subnet via `azurerm_subnet_network_security_group_association` — this is the resource that actually attaches the NSG. Creating the NSG alone does nothing without this association.
+
+#### `firewall.tf`
+Azure Firewall sitting in the hub VNet's `AzureFirewallSubnet` (10.0.0.0/26). Standard SKU.
+
+- **Cost toggle** — `var.deploy_firewall` (default `true`). Set to `false` in dev to skip deployment and save ~$900/month. All firewall resources use `count = var.deploy_firewall ? 1 : 0`.
+
+- **Public IP** (`pip-afw-dev-uae`) — Static, Standard SKU. Required for Azure Firewall outbound traffic. Every Azure Firewall must have at least one public IP.
+
+- **Firewall Policy** (`afwp-dev-uae`) — the ruleset container. Rules are organized hierarchically: Policy → Rule Collection Group → Rule Collection → Rules. DNS proxy enabled so spokes can use the firewall as their DNS server.
+
+- **Firewall resource** (`afw-dev-uae`) — the firewall itself, linked to the policy and the subnet.
+
+- **Network Rule Collection Group** (Layer 4 — port/protocol level):
+  - Allow spoke-to-spoke traffic (10.1.0.0/16 ↔ 10.1.0.0/16)
+  - Allow DNS outbound (UDP 53) from spokes
+
+- **Application Rule Collection Group** (Layer 7 — FQDN/HTTP level):
+  - Allow Azure services: *.microsoft.com, *.azure.com, *.windows.net, *.azurecr.io, *.blob.core.windows.net, *.database.windows.net
+  - Allow package managers: *.ubuntu.com, *.docker.io, registry.npmjs.org, pypi.org
+
+> Interview note: Azure Firewall rules have two types — **network rules** (IP/port based, Layer 4) and **application rules** (FQDN based, Layer 7). Application rules can filter by domain name, which is more secure than opening IP ranges.
+
+#### `peering.tf`
+VNet Peering connecting hub ↔ spoke. Azure peering is **not bidirectional by default** — you must create a peering resource in both directions.
+
+- **Hub → Spoke** (`peer-hub-to-spoke-dev`) — allows the hub to reach spoke resources. `allow_forwarded_traffic = true` so the firewall can forward traffic to spokes.
+
+- **Spoke → Hub** (`peer-spoke-to-hub-dev`) — allows spokes to reach hub services (firewall, bastion, gateway). Also allows forwarded traffic.
+
+- **Gateway transit** — set to `false` for now (no VPN/ExpressRoute gateway deployed yet). Flip `allow_gateway_transit = true` on hub and `use_remote_gateways = true` on spoke when a gateway is added in a later phase.
+
+> Interview note: "VNet peering is non-transitive" — if Spoke A peers with Hub and Spoke B peers with Hub, Spoke A and Spoke B can only talk via the hub's firewall, not directly. This is a security feature, not a bug.
+
 ---
 
-### ⏸ Paused here — resume from VNet Peering
+### ⏸ Paused here — resume from Log Analytics Workspace
 
-**Next resource: VNet Peering** — the connection between hub and spoke VNets that allows traffic to flow between them. After that: NSGs, Log Analytics, then wiring everything into `environments/dev/main.tf`.
+**Next resource: Log Analytics Workspace** — centralized logging sink. After that: wire networking module into `environments/dev/main.tf`, then enable backend block.
 
 **Pending: `az login` + `terraform plan`** — deferred until Azure account is set up.
 
