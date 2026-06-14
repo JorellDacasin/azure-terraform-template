@@ -265,14 +265,14 @@ All networking resources written and wired. The only remaining step is `az login
 
 ---
 
-## Phase 2 — Identity, RBAC & Policy
-*Not started. Covers: Service Principals, custom roles, Azure Policy, Defender for Cloud, Key Vault.*
+## Phase 2 — Identity, RBAC & Policy ✅
+*Complete (code-side). See [phase-2-notes.md](phase-2-notes.md).*
 
-## Phase 3 — Azure DevOps Pipelines
-*Not started. Covers: PR validation, apply pipeline, Key Vault-linked secrets, drift detection.*
+## Phase 3 — Azure DevOps Pipelines + GitHub Actions ✅
+*Complete (code-side). See [phase-3-notes.md](phase-3-notes.md).*
 
-## Phase 4 — Workload Deployments
-*Not started. Covers: AKS, ACR, App Service, Azure SQL, API Management.*
+## Phase 4 — Workload Deployments ✅
+*Complete (code-side). See [phase-4-notes.md](phase-4-notes.md).*
 
 ## Phase 5 — ML & AI Instances
 *Not started. Covers: AML Workspace, Compute Cluster, Azure OpenAI, AI Search, Content Safety.*
