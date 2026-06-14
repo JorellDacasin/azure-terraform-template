@@ -8,10 +8,10 @@
 
 # ── Hub → Spoke
 resource "azurerm_virtual_network_peering" "hub_to_spoke" {
-  name                         = "peer-hub-to-spoke-${var.env}"
-  resource_group_name          = azurerm_resource_group.hub.name
-  virtual_network_name         = azurerm_virtual_network.hub.name
-  remote_virtual_network_id    = azurerm_virtual_network.spoke.id
+  name                      = "peer-hub-to-spoke-${var.env}"
+  resource_group_name       = azurerm_resource_group.hub.name
+  virtual_network_name      = azurerm_virtual_network.hub.name
+  remote_virtual_network_id = azurerm_virtual_network.spoke.id
 
   # Allow traffic forwarded by the firewall to reach the spoke
   allow_forwarded_traffic = true
@@ -26,10 +26,10 @@ resource "azurerm_virtual_network_peering" "hub_to_spoke" {
 
 # ── Spoke → Hub
 resource "azurerm_virtual_network_peering" "spoke_to_hub" {
-  name                         = "peer-spoke-to-hub-${var.env}"
-  resource_group_name          = azurerm_resource_group.spoke.name
-  virtual_network_name         = azurerm_virtual_network.spoke.name
-  remote_virtual_network_id    = azurerm_virtual_network.hub.id
+  name                      = "peer-spoke-to-hub-${var.env}"
+  resource_group_name       = azurerm_resource_group.spoke.name
+  virtual_network_name      = azurerm_virtual_network.spoke.name
+  remote_virtual_network_id = azurerm_virtual_network.hub.id
 
   # Allow traffic forwarded by the firewall back to the spoke
   allow_forwarded_traffic = true

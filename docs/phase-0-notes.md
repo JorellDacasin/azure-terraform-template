@@ -209,13 +209,59 @@ VNet Peering connecting hub ↔ spoke. Azure peering is **not bidirectional by d
 
 > Interview note: "VNet peering is non-transitive" — if Spoke A peers with Hub and Spoke B peers with Hub, Spoke A and Spoke B can only talk via the hub's firewall, not directly. This is a security feature, not a bug.
 
+#### `log-analytics.tf`
+Central Log Analytics Workspace — every resource in the landing zone sends diagnostic data here.
+
+- **Log Analytics Workspace** (`log-hub-dev-uae`) — PerGB2018 SKU (5 GB/day free ingestion, 30-day retention). This is the single pane of glass for all infrastructure logs and metrics. KQL queries run against this workspace.
+
+- **Diagnostic Settings — Firewall** (`diag-afw-to-logs`) — streams four log categories:
+  - `AZFWApplicationRule` — Layer 7 (FQDN) rule hits
+  - `AZFWNetworkRule` — Layer 4 (port/protocol) rule hits
+  - `AZFWThreatIntel` — threat intelligence matches
+  - `AZFWDnsProxy` — DNS proxy resolution logs
+  - Plus `AllMetrics` for throughput, latency, etc.
+  - Uses `count = var.deploy_firewall ? 1 : 0` — only created when firewall is deployed.
+
+- **Diagnostic Settings — NSGs** (`diag-nsg-*-to-logs`) — one per NSG (bastion, app, data). Two log categories each:
+  - `NetworkSecurityGroupEvent` — individual packet allow/deny events
+  - `NetworkSecurityGroupRuleCounter` — aggregated hit counts per rule
+
+> Interview note: Diagnostic settings are a separate resource from the resource they monitor. A common mistake is creating the resource but forgetting the diagnostic setting — then you have no visibility into what it's doing.
+
+#### `outputs.tf`
+Exports key resource IDs so `environments/dev/main.tf` can pass them to future modules:
+- `log_analytics_workspace_id` / `_name` — needed by Defender for Cloud (Phase 2), AKS (Phase 4)
+- `hub_vnet_id` / `spoke_vnet_id` — for additional peerings or VPN gateways
+- `spoke_app_subnet_id` / `spoke_data_subnet_id` — AKS and database modules will deploy into these
+- `firewall_private_ip` — used as next-hop in spoke route tables (returns null when firewall is disabled)
+- `hub_resource_group_name` / `spoke_resource_group_name` — for resources that co-locate in the same RGs
+
 ---
 
-### ⏸ Paused here — resume from Log Analytics Workspace
+### Wiring: `environments/dev/main.tf`
 
-**Next resource: Log Analytics Workspace** — centralized logging sink. After that: wire networking module into `environments/dev/main.tf`, then enable backend block.
+Added `module "networking"` block that calls the networking module with dev-appropriate values:
+- `deploy_firewall = false` — saves ~$900/month in dev
+- `tags = module.landing_zone.tags` — inherits consistent tagging from Phase 0
+
+This is the pattern: each environment folder is a *composition root* that calls modules with environment-specific values. The modules themselves are environment-agnostic.
+
+---
+
+### Backend block: `environments/dev/providers.tf`
+
+Already present and commented out. Three-step activation:
+1. Run `terraform apply` in `terraform/bootstrap/` to create the storage account
+2. Uncomment the `backend "azurerm"` block
+3. Run `terraform init -migrate-state` to move the local state to remote
 
 **Pending: `az login` + `terraform plan`** — deferred until Azure account is set up.
+
+---
+
+### ✅ Phase 1 Complete (code-side)
+
+All networking resources written and wired. The only remaining step is `az login` + `terraform apply` against a real Azure subscription to provision these resources. That can happen anytime.
 
 ---
 

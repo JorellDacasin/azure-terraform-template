@@ -23,7 +23,7 @@ resource "azurerm_public_ip" "firewall" {
   location            = azurerm_resource_group.hub.location
   resource_group_name = azurerm_resource_group.hub.name
   allocation_method   = "Static"
-  sku                 = "Standard"   # Standard SKU required for Azure Firewall
+  sku                 = "Standard" # Standard SKU required for Azure Firewall
   tags                = var.tags
 }
 
@@ -120,12 +120,12 @@ resource "azurerm_firewall_policy_rule_collection_group" "application" {
         type = "Https"
         port = 443
       }
-      source_addresses  = ["10.1.0.0/16"]
+      source_addresses = ["10.1.0.0/16"]
       destination_fqdns = [
         "*.microsoft.com",
         "*.azure.com",
         "*.windows.net",
-        "*.azurecr.io",           # Azure Container Registry
+        "*.azurecr.io",            # Azure Container Registry
         "*.blob.core.windows.net", # Storage
         "*.database.windows.net",  # Azure SQL
       ]
@@ -144,7 +144,7 @@ resource "azurerm_firewall_policy_rule_collection_group" "application" {
         type = "Https"
         port = 443
       }
-      source_addresses  = ["10.1.0.0/16"]
+      source_addresses = ["10.1.0.0/16"]
       destination_fqdns = [
         "*.ubuntu.com",
         "*.docker.io",
