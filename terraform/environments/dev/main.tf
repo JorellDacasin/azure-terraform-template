@@ -48,3 +48,41 @@ module "identity" {
 
   enable_defender = false # cost toggle — off in dev
 }
+
+# ──────────────────────────────────────────────────────────
+# Workloads — ACR, AKS, SQL, App Service, APIM
+# ──────────────────────────────────────────────────────────
+# Deploys into the spoke subnets from Phase 1. AKS and ACR are
+# always on (core platform). SQL, App Service, APIM have cost
+# toggles. APIM defaults to off — enable when learning API
+# gateway patterns.
+
+module "workloads" {
+  source = "../../modules/workloads"
+
+  org_prefix = "jd"
+  workload   = "platform"
+  env        = "dev"
+  region     = "uae"
+  location   = "UAE North"
+  tags       = module.landing_zone.tags
+
+  # Network references from Phase 1
+  app_subnet_id              = module.networking.spoke_app_subnet_id
+  data_subnet_id             = module.networking.spoke_data_subnet_id
+  spoke_vnet_id              = module.networking.spoke_vnet_id
+  log_analytics_workspace_id = module.networking.log_analytics_workspace_id
+
+  # AKS — single node, cheapest VM for dev
+  kubernetes_version = "1.30"
+  aks_node_count     = 1
+  aks_node_vm_size   = "Standard_B2s"
+
+  # SQL — provide password via tfvars or CI variable (never hardcode)
+  sql_admin_password = var.sql_admin_password
+
+  # Cost toggles
+  deploy_sql         = true
+  deploy_app_service = true
+  deploy_apim        = false   # enable when learning API gateway
+}
