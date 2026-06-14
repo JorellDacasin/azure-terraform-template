@@ -1,0 +1,76 @@
+# ──────────────────────────────────────────────────────────────
+# Drift Detection Pipeline
+# Scheduled: weekly (Monday 06:00 UTC).
+# Runs `terraform plan -detailed-exitcode` and warns if Azure
+# state has drifted from the code (someone made a manual change
+# in the portal).
+#
+# Exit codes: 0 = no drift, 1 = error, 2 = DRIFT DETECTED
+# ──────────────────────────────────────────────────────────────
+
+trigger: none
+pr: none
+
+schedules:
+  - cron: '0 6 * * Mon'           # Every Monday at 06:00 UTC (10:00 Dubai)
+    displayName: 'Weekly Drift Check'
+    branches:
+      include:
+        - main
+    always: true                   # Run even if no code changes since last check
+
+variables:
+  - group: terraform-credentials
+  - name: TF_WORKING_DIR
+    value: 'terraform/environments/dev'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+  - stage: DriftCheck
+    displayName: 'Drift Detection'
+    jobs:
+      - job: DetectDrift
+        displayName: 'terraform plan (drift check)'
+        steps:
+          - template: templates/terraform-init.yml
+            parameters:
+              workingDirectory: $(TF_WORKING_DIR)
+
+          # ── Plan with detailed exit code ─────────────────────
+          # Exit 0 = in sync, exit 2 = drift. We capture the
+          # exit code manually because Azure DevOps would treat
+          # exit 2 as a failure.
+          - script: |
+              set +e
+              terraform plan \
+                -input=false \
+                -no-color \
+                -detailed-exitcode \
+                2>&1 | tee drift-output.txt
+              EXIT_CODE=$?
+              set -e
+
+              echo "##vso[task.setvariable variable=driftExitCode]$EXIT_CODE"
+
+              if [ $EXIT_CODE -eq 0 ]; then
+                echo "✅ No drift — Azure state matches code."
+              elif [ $EXIT_CODE -eq 2 ]; then
+                echo "##vso[task.logissue type=warning]⚠️ DRIFT DETECTED — Azure state differs from code. Review the plan output."
+              else
+                echo "##vso[task.logissue type=error]❌ Terraform plan failed."
+                exit 1
+              fi
+            displayName: 'Terraform Plan (Drift Check)'
+            workingDirectory: $(TF_WORKING_DIR)
+            env:
+              ARM_CLIENT_ID:       $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET:   $(ARM_CLIENT_SECRET)
+              ARM_TENANT_ID:       $(ARM_TENANT_ID)
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+
+          - publish: $(TF_WORKING_DIR)/drift-output.txt
+            artifact: drift-report
+            displayName: 'Publish Drift Report'
+            condition: always()

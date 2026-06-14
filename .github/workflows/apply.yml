@@ -1,0 +1,109 @@
+# ──────────────────────────────────────────────────────────────
+# Apply Pipeline — GitHub Actions
+# Runs: terraform plan → apply after merge to main.
+# Uses GitHub Environments for approval gates.
+# ──────────────────────────────────────────────────────────────
+
+name: 'Terraform Apply'
+
+on:
+  push:
+    branches: [main]
+    paths: ['terraform/**']
+
+permissions:
+  contents: read
+
+env:
+  TF_WORKING_DIR: 'terraform/environments/dev'
+
+jobs:
+  # ── Job 1: Plan ──────────────────────────────────────────
+  # Re-plan after merge. State may have changed between PR
+  # approval and merge — never apply a stale plan.
+  plan:
+    name: 'Terraform Plan'
+    runs-on: ubuntu-latest
+    env:
+      ARM_CLIENT_ID:       ${{ secrets.ARM_CLIENT_ID }}
+      ARM_CLIENT_SECRET:   ${{ secrets.ARM_CLIENT_SECRET }}
+      ARM_TENANT_ID:       ${{ secrets.ARM_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.5.7'
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.BACKEND_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ secrets.BACKEND_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ secrets.BACKEND_CONTAINER }}" \
+            -backend-config="key=${{ secrets.BACKEND_STATE_KEY }}" \
+            -input=false
+
+      - name: Terraform Plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform plan -input=false -no-color -out=tfplan \
+            2>&1 | tee plan-output.txt
+
+      # Upload plan binary so the apply job can use the exact
+      # reviewed plan — no re-planning, no drift risk.
+      - name: Upload Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: |
+            ${{ env.TF_WORKING_DIR }}/tfplan
+            ${{ env.TF_WORKING_DIR }}/plan-output.txt
+          retention-days: 5
+
+  # ── Job 2: Apply ─────────────────────────────────────────
+  # Configure approval gates in:
+  # GitHub repo → Settings → Environments → "dev" → Protection rules
+  #
+  # For prod: duplicate this job with environment: 'prod'
+  # and add required reviewers in the protection rules.
+  apply:
+    name: 'Terraform Apply'
+    runs-on: ubuntu-latest
+    needs: plan
+    environment: dev               # Approval gates configured in repo settings
+    env:
+      ARM_CLIENT_ID:       ${{ secrets.ARM_CLIENT_ID }}
+      ARM_CLIENT_SECRET:   ${{ secrets.ARM_CLIENT_SECRET }}
+      ARM_TENANT_ID:       ${{ secrets.ARM_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.5.7'
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.BACKEND_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ secrets.BACKEND_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ secrets.BACKEND_CONTAINER }}" \
+            -backend-config="key=${{ secrets.BACKEND_STATE_KEY }}" \
+            -input=false
+
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform Apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -input=false -no-color tfplan

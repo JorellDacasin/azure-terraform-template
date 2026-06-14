@@ -1,0 +1,45 @@
+# ──────────────────────────────────────────────────────────────
+# Shared template: Install Terraform + run `terraform init`
+# Called by: pr-validation.yml, apply.yml, drift-detection.yml
+# Keeps init logic DRY — change once, all pipelines pick it up.
+# ──────────────────────────────────────────────────────────────
+
+parameters:
+  - name: workingDirectory
+    type: string
+    default: 'terraform/environments/dev'
+  - name: terraformVersion
+    type: string
+    default: '1.5.7'
+
+steps:
+  # ── Install Terraform ──────────────────────────────────────
+  # Pin the version so every run uses the same binary.
+  # Prevents "works on my machine" drift between local and CI.
+  - script: |
+      set -euo pipefail
+      curl -fsSL "https://releases.hashicorp.com/terraform/${{ parameters.terraformVersion }}/terraform_${{ parameters.terraformVersion }}_linux_amd64.zip" \
+        -o /tmp/terraform.zip
+      sudo unzip -o /tmp/terraform.zip -d /usr/local/bin/
+      terraform version
+    displayName: 'Install Terraform ${{ parameters.terraformVersion }}'
+
+  # ── Terraform Init ─────────────────────────────────────────
+  # Connects to the remote backend (Azure Blob Storage) created
+  # in Phase 1 bootstrap. Backend values come from the variable
+  # group so they're not hardcoded in YAML.
+  - script: |
+      set -euo pipefail
+      terraform init \
+        -backend-config="resource_group_name=$(BACKEND_RESOURCE_GROUP)" \
+        -backend-config="storage_account_name=$(BACKEND_STORAGE_ACCOUNT)" \
+        -backend-config="container_name=$(BACKEND_CONTAINER)" \
+        -backend-config="key=$(BACKEND_STATE_KEY)" \
+        -input=false
+    displayName: 'Terraform Init'
+    workingDirectory: ${{ parameters.workingDirectory }}
+    env:
+      ARM_CLIENT_ID:       $(ARM_CLIENT_ID)
+      ARM_CLIENT_SECRET:   $(ARM_CLIENT_SECRET)
+      ARM_TENANT_ID:       $(ARM_TENANT_ID)
+      ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)

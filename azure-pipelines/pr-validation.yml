@@ -1,0 +1,71 @@
+# ──────────────────────────────────────────────────────────────
+# PR Validation Pipeline
+# Runs: terraform init → validate → plan on every pull request.
+# Purpose: reviewers see exactly what will change BEFORE merging.
+# ──────────────────────────────────────────────────────────────
+
+trigger: none   # PRs only — apply.yml handles pushes to main
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - 'terraform/**'
+
+variables:
+  - group: terraform-credentials   # Linked to Key Vault (ARM_* + BACKEND_*)
+  - name: TF_WORKING_DIR
+    value: 'terraform/environments/dev'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+  - stage: Validate
+    displayName: 'Validate & Plan'
+    jobs:
+      - job: TerraformPlan
+        displayName: 'terraform validate + plan'
+        steps:
+          # ── Shared init (install + backend) ──────────────────
+          - template: templates/terraform-init.yml
+            parameters:
+              workingDirectory: $(TF_WORKING_DIR)
+
+          # ── Validate ─────────────────────────────────────────
+          # Checks HCL syntax and module references. Fast, offline,
+          # catches typos before the expensive plan step.
+          - script: terraform validate
+            displayName: 'Terraform Validate'
+            workingDirectory: $(TF_WORKING_DIR)
+
+          # ── Plan ─────────────────────────────────────────────
+          # Compares code vs actual Azure state. -detailed-exitcode
+          # returns 0 (no changes), 1 (error), 2 (changes pending).
+          # Output saved to file for artifact publishing.
+          - script: |
+              set -euo pipefail
+              terraform plan \
+                -input=false \
+                -no-color \
+                -detailed-exitcode \
+                -out=tfplan \
+                2>&1 | tee plan-output.txt
+            displayName: 'Terraform Plan'
+            workingDirectory: $(TF_WORKING_DIR)
+            continueOnError: true    # exit code 2 = changes detected, not an error
+            env:
+              ARM_CLIENT_ID:       $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET:   $(ARM_CLIENT_SECRET)
+              ARM_TENANT_ID:       $(ARM_TENANT_ID)
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+
+          # ── Publish plan output ──────────────────────────────
+          # Reviewers download this artifact to see exactly what
+          # Terraform will create/change/destroy. Audit trail.
+          - publish: $(TF_WORKING_DIR)/plan-output.txt
+            artifact: terraform-plan
+            displayName: 'Publish Plan Output'
+            condition: always()

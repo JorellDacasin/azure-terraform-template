@@ -1,0 +1,106 @@
+# ──────────────────────────────────────────────────────────────
+# Apply Pipeline
+# Runs: terraform plan → apply after merge to main.
+# Uses Azure DevOps Environments for approval gates and
+# deployment history tracking.
+# ──────────────────────────────────────────────────────────────
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - 'terraform/**'
+
+pr: none   # PRs handled by pr-validation.yml
+
+variables:
+  - group: terraform-credentials
+  - name: TF_WORKING_DIR
+    value: 'terraform/environments/dev'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+  # ── Stage 1: Plan ──────────────────────────────────────────
+  # Re-plan after merge. State may have changed between PR
+  # approval and merge — never apply a stale plan.
+  - stage: Plan
+    displayName: 'Terraform Plan'
+    jobs:
+      - job: Plan
+        displayName: 'terraform plan'
+        steps:
+          - template: templates/terraform-init.yml
+            parameters:
+              workingDirectory: $(TF_WORKING_DIR)
+
+          - script: |
+              set -euo pipefail
+              terraform plan \
+                -input=false \
+                -no-color \
+                -out=tfplan \
+                2>&1 | tee plan-output.txt
+            displayName: 'Terraform Plan'
+            workingDirectory: $(TF_WORKING_DIR)
+            env:
+              ARM_CLIENT_ID:       $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET:   $(ARM_CLIENT_SECRET)
+              ARM_TENANT_ID:       $(ARM_TENANT_ID)
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+
+          - publish: $(TF_WORKING_DIR)/plan-output.txt
+            artifact: terraform-plan
+            displayName: 'Publish Plan Output'
+
+          # Persist the plan binary for the Apply stage.
+          # Without this, Apply would need to re-plan (drift risk).
+          - publish: $(TF_WORKING_DIR)/tfplan
+            artifact: terraform-plan-binary
+            displayName: 'Publish Plan Binary'
+
+  # ── Stage 2: Apply ─────────────────────────────────────────
+  # Deployment job — Azure DevOps tracks each run in the
+  # environment's deployment history. Add approval gates in
+  # the portal: Pipelines → Environments → dev → Approvals.
+  #
+  # For prod: duplicate this stage with environment: 'prod'
+  # and add a manual approval check in the portal.
+  - stage: Apply
+    displayName: 'Terraform Apply'
+    dependsOn: Plan
+    jobs:
+      - deployment: Apply
+        displayName: 'terraform apply'
+        environment: 'dev'         # Configure approval gates in portal
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                # Re-init (fresh agent — no state from Plan stage)
+                - template: templates/terraform-init.yml
+                  parameters:
+                    workingDirectory: $(TF_WORKING_DIR)
+
+                # Download the exact plan that was reviewed
+                - download: current
+                  artifact: terraform-plan-binary
+                  displayName: 'Download Plan Binary'
+
+                - script: |
+                    set -euo pipefail
+                    cp $(Pipeline.Workspace)/terraform-plan-binary/tfplan ./tfplan
+                    terraform apply \
+                      -input=false \
+                      -no-color \
+                      tfplan
+                  displayName: 'Terraform Apply'
+                  workingDirectory: $(TF_WORKING_DIR)
+                  env:
+                    ARM_CLIENT_ID:       $(ARM_CLIENT_ID)
+                    ARM_CLIENT_SECRET:   $(ARM_CLIENT_SECRET)
+                    ARM_TENANT_ID:       $(ARM_TENANT_ID)
+                    ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)

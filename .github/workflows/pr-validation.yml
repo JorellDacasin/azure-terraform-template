@@ -1,0 +1,110 @@
+# ──────────────────────────────────────────────────────────────
+# PR Validation — GitHub Actions
+# Runs: terraform init → validate → plan on every pull request.
+# Posts the plan output as a PR comment for reviewers.
+# ──────────────────────────────────────────────────────────────
+
+name: 'Terraform PR Validation'
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['terraform/**']
+
+permissions:
+  contents: read
+  pull-requests: write           # Needed to post PR comments
+
+env:
+  TF_WORKING_DIR: 'terraform/environments/dev'
+  ARM_CLIENT_ID:       ${{ secrets.ARM_CLIENT_ID }}
+  ARM_CLIENT_SECRET:   ${{ secrets.ARM_CLIENT_SECRET }}
+  ARM_TENANT_ID:       ${{ secrets.ARM_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+jobs:
+  validate-and-plan:
+    name: 'Validate & Plan'
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── Checkout ───────────────────────────────────────────
+      - uses: actions/checkout@v4
+
+      # ── Install Terraform ─────────────────────────────────
+      # Official HashiCorp action. Pins version, caches binary.
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.5.7'
+
+      # ── Init ───────────────────────────────────────────────
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.BACKEND_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ secrets.BACKEND_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ secrets.BACKEND_CONTAINER }}" \
+            -backend-config="key=${{ secrets.BACKEND_STATE_KEY }}" \
+            -input=false
+
+      # ── Validate ───────────────────────────────────────────
+      - name: Terraform Validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform validate
+
+      # ── Plan ───────────────────────────────────────────────
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        continue-on-error: true
+        run: |
+          terraform plan -input=false -no-color -detailed-exitcode -out=tfplan \
+            2>&1 | tee plan-output.txt
+          echo "exitcode=$?" >> "$GITHUB_OUTPUT"
+
+      # ── Post plan as PR comment ────────────────────────────
+      # Reviewers see the full plan without leaving the PR page.
+      # Updates the same comment on subsequent pushes (no spam).
+      - name: Post Plan to PR
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const fs = require('fs');
+            const planPath = '${{ env.TF_WORKING_DIR }}/plan-output.txt';
+            let plan = 'No plan output found.';
+            if (fs.existsSync(planPath)) {
+              plan = fs.readFileSync(planPath, 'utf8');
+              if (plan.length > 60000) {
+                plan = plan.substring(0, 60000) + '\n\n... (truncated)';
+              }
+            }
+
+            const body = `## Terraform Plan\n\n\`\`\`\n${plan}\n\`\`\``;
+
+            // Find existing bot comment to update (avoid spam)
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('## Terraform Plan')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
