@@ -155,3 +155,46 @@ module "azure_openai" {
   deploy_ai_services    = false         # enable when learning vision/speech
   deploy_content_safety = true          # healthcare requirement
 }
+
+# ──────────────────────────────────────────────────────────
+# Compliance — private endpoints, CMK, Purview, immutable
+# storage, diagnostic settings (LifeCare-specific hardening)
+# ──────────────────────────────────────────────────────────
+# Locks down all resources from Phases 1–5 for healthcare:
+# no public endpoints, encryption keys you control, tamper-proof
+# audit logs. Purview is off for dev (complex pricing).
+#
+# NOTE: ACR private endpoint requires Premium SKU — in dev with
+# Basic SKU, the ACR PE will fail. Set deploy_private_endpoints
+# = false for dev, true for prod (after upgrading ACR to Premium).
+
+module "compliance" {
+  source = "../../modules/compliance"
+
+  env        = "dev"
+  org_prefix = "jd"
+  workload   = "platform"
+  region     = "uae"
+  location   = "UAE North"
+  tags       = module.landing_zone.tags
+
+  # Network references
+  data_subnet_id = module.networking.spoke_data_subnet_id
+  spoke_vnet_id  = module.networking.spoke_vnet_id
+
+  # Resource references from earlier phases
+  key_vault_id               = module.identity.key_vault_id
+  key_vault_name             = module.identity.key_vault_name
+  acr_id                     = module.workloads.acr_id
+  openai_id                  = module.azure_openai.openai_id != null ? module.azure_openai.openai_id : ""
+  aml_workspace_id           = module.aml_workspace.workspace_id
+  aml_storage_account_id     = module.aml_workspace.storage_account_id
+  content_safety_id          = module.azure_openai.content_safety_id != null ? module.azure_openai.content_safety_id : ""
+  log_analytics_workspace_id = module.networking.log_analytics_workspace_id
+
+  # Cost toggles — relaxed for dev, strict for prod
+  deploy_private_endpoints = false    # requires ACR Premium ($50/mo) — enable in prod
+  deploy_cmk               = true     # free (key in existing KV)
+  deploy_purview           = false    # complex pricing — enable in prod
+  deploy_immutable_storage = true     # cheap (~$0.02/GB/mo)
+}

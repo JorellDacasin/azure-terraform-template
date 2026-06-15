@@ -277,5 +277,5 @@ All networking resources written and wired. The only remaining step is `az login
 ## Phase 5 — ML & AI Instances ✅
 *Complete (code-side). See [phase-5-notes.md](phase-5-notes.md).*
 
-## Phase 6 — Healthcare Compliance Hardening
-*Not started. Covers: private endpoints, CMK, Purview, immutable storage (LifeCare-specific).*
+## Phase 6 — Healthcare Compliance Hardening ✅
+*Complete (code-side). See [phase-6-notes.md](phase-6-notes.md).*
