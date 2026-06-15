@@ -86,3 +86,72 @@ module "workloads" {
   deploy_app_service = true
   deploy_apim        = false   # enable when learning API gateway
 }
+
+# ──────────────────────────────────────────────────────────
+# ML Workspace — AML + Storage + App Insights + Compute
+# ──────────────────────────────────────────────────────────
+# The workspace itself is free. Compute cluster scales to zero
+# when idle — no running jobs = no cost. References Key Vault
+# from Phase 2 and ACR from Phase 4.
+
+module "aml_workspace" {
+  source = "../../modules/aml-workspace"
+
+  env        = "dev"
+  org_prefix = "jd"
+  workload   = "platform"
+  region     = "uae"
+  location   = "UAE North"
+  tags       = module.landing_zone.tags
+
+  # References from earlier phases
+  key_vault_id  = module.identity.key_vault_id
+  acr_id        = module.workloads.acr_id
+  app_subnet_id = module.networking.spoke_app_subnet_id
+
+  # Compute cluster — scales to 0 (no idle cost)
+  deploy_compute   = true
+  compute_vm_size  = "Standard_DS2_v2"
+  compute_min_nodes = 0    # zero = no cost when idle
+  compute_max_nodes = 1
+}
+
+# ──────────────────────────────────────────────────────────
+# Azure OpenAI + AI Services — GPT-4o, embeddings, search,
+# content safety
+# ──────────────────────────────────────────────────────────
+# OpenAI is pay-per-token (no idle cost). AI Search uses the
+# free tier. Content Safety is on by default (healthcare req).
+# AI Services multi-account is off — enable when needed.
+#
+# NOTE: OpenAI deploys to Sweden Central (not UAE North)
+# because Azure OpenAI has limited region availability.
+
+module "azure_openai" {
+  source = "../../modules/azure-openai"
+
+  env        = "dev"
+  org_prefix = "jd"
+  workload   = "platform"
+  region     = "uae"
+  location   = "UAE North"
+  tags       = module.landing_zone.tags
+
+  # OpenAI in a supported region (UAE may not have it)
+  openai_location = "swedencentral"
+
+  # Model deployments
+  gpt_model_name    = "gpt-4o"
+  gpt_model_version = "2024-11-20"
+  gpt_capacity      = 10               # 10K TPM — minimum for dev
+
+  embedding_model_name    = "text-embedding-3-small"
+  embedding_model_version = "1"
+  embedding_capacity      = 10
+
+  # Cost toggles
+  deploy_openai         = true
+  deploy_ai_search      = true          # Free tier
+  deploy_ai_services    = false         # enable when learning vision/speech
+  deploy_content_safety = true          # healthcare requirement
+}
